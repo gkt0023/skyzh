@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>管理后台 - 账号商品展示站</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- 顶栏 -->
+  <header class="topbar">
+    <div class="inner">
+      <div class="logo">账号商品展示站 · 管理后台</div>
+      <div class="nav">
+        <span class="user-info" id="userInfo"></span>
+        <a href="index.html">返回首页</a>
+        <a href="javascript:logout()">退出登录</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- 全局提示条 -->
+    <div class="alert" id="alert" style="max-width:100%"></div>
+
+    <!-- ① 审核注册用户（需求 7-①） -->
+    <section class="admin-section">
+      <h2>待审核账号 <span class="count" id="pendingUserCount">0</span></h2>
+      <table class="admin-table">
+        <thead>
+          <tr><th>邮箱</th><th>昵称</th><th>注册时间</th><th>状态</th><th>操作</th></tr>
+        </thead>
+        <tbody id="pendingUsers"></tbody>
+      </table>
+    </section>
+
+    <!-- ② 审核上架商品（需求 7-②） -->
+    <section class="admin-section">
+      <h2>待审核商品 <span class="count" id="pendingGoodsCount">0</span></h2>
+      <table class="admin-table">
+        <thead>
+          <tr><th>图片</th><th>账号简介</th><th>发布人</th><th>提交时间</th><th>状态</th><th>操作</th></tr>
+        </thead>
+        <tbody id="pendingGoods"></tbody>
+      </table>
+    </section>
+
+    <!-- ③ 已展示商品（确认自动编号生效，需求 5） -->
+    <section class="admin-section">
+      <h2>已展示商品 <span class="count" id="approvedGoodsCount">0</span></h2>
+      <table class="admin-table">
+        <thead>
+          <tr><th>编号</th><th>图片</th><th>账号简介</th><th>发布人</th><th>审核时间</th><th>状态</th></tr>
+        </thead>
+        <tbody id="approvedGoods"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/common.js"></script>
+  <script>
+    // ============================================================
+    // 管理后台逻辑：仅管理员可访问（requireAdmin 守卫，需求 7）
+    // ① 审核注册用户：批准/驳回
+    // ② 审核上架商品：批准展示/驳回（批准时由数据库触发器自动生成编号）
+    // ============================================================
+    (async function () {
+      // 管理员守卫：非管理员会被拦截跳回
+      const admin = await requireAdmin();
+      if (!admin) return;
+      document.getElementById("userInfo").textContent = "管理员：" + admin.username;
+
+      // 初始加载三类列表
+      await Promise.all([loadPendingUsers(), loadPendingGoods(), loadApprovedGoods()]);
+
+      // 状态徽章样式
+      function badge(status) {
+        const map = {
+          pending: ["badge-pending", "待审核"],
+          approved: ["badge-approved", "已通过"],
+          rejected: ["badge-rejected", "已驳回"],
+        };
+        const cfg = map[status] || ["", status];
+        return '<span class="badge ' + cfg[0] + '">' + cfg[1] + "</span>";
+      }
+
+      // ---------- ① 待审核用户列表 ----------
+      async function loadPendingUsers() {
+        const { data, error } = await supabase
+          .from("users")
+          .select("id, email, username, created_at")
+          .eq("status", "pending")
+          .order("created_at", { ascending: true });
+        if (error) { showMsg("加载待审核用户失败：" + error.message, "error"); return; }
+
+        const tb = document.getElementById("pendingUsers");
+        tb.innerHTML = "";
+        document.getElementById("pendingUserCount").textContent = data.length;
+        if (!data.length) {
+          tb.innerHTML = '<tr><td colspan="5" class="empty">暂无待审核用户</td></tr>';
+          return;
+        }
+        data.forEach(function (u) {
+          const tr = document.createElement("tr");
+          tr.innerHTML =
+            "<td>" + escapeHtml(u.email) + "</td>" +
+            "<td>" + escapeHtml(u.username) + "</td>" +
+            "<td>" + formatTime(u.created_at) + "</td>" +
+            "<td>" + badge("pending") + "</td>" +
+            '<td class="actions">' +
+            '  <button class="btn btn-success btn-sm" onclick="reviewUser(\'' + u.id + '\',\'approved\')">批准</button>' +
+            '  <button class="btn btn-danger btn-sm" onclick="reviewUser(\'' + u.id + '\',\'rejected\')">驳回</button>' +
+            "</td>";
+          tb.appendChild(tr);
+        });
+      }
+
+      // 审核用户：批准 / 驳回（更新状态 + 审核时间）
+      window.reviewUser = async function (id, status) {
+        const ok = confirm(status === "approved" ? "确认批准该账号？批准后即可登录。" : "确认驳回该账号？");
+        if (!ok) return;
+        const { error } = await supabase
+          .from("users")
+          .update({ status: status, reviewed_at: new Date().toISOString() })
+          .eq("id", id);
+        if (error) { showMsg("操作失败：" + error.message, "error"); return; }
+        showMsg(status === "approved" ? "已批准该账号" : "已驳回该账号", "success");
+        loadPendingUsers();
+      };
+
+      // ---------- ② 待审核商品列表 ----------
+      async function loadPendingGoods() {
+        const { data, error } = await supabase
+          .from("goods")
+          .select("id, images, intro, created_at, users(username)")
+          .eq("status", "pending")
+          .order("created_at", { ascending: true });
+        if (error) { showMsg("加载待审核商品失败：" + error.message, "error"); return; }
+
+        const tb = document.getElementById("pendingGoods");
+        tb.innerHTML = "";
+        document.getElementById("pendingGoodsCount").textContent = data.length;
+        if (!data.length) {
+          tb.innerHTML = '<tr><td colspan="6" class="empty">暂无待审核商品</td></tr>';
+          return;
+        }
+        data.forEach(function (g) {
+          const img = g.images && g.images.length
+            ? '<img class="thumb" src="' + g.images[0] + '" alt="商品图">'
+            : "-";
+          const tr = document.createElement("tr");
+          tr.innerHTML =
+            "<td>" + img + "</td>" +
+            '<td class="intro-cell">' + escapeHtml(g.intro) + "</td>" +
+            "<td>" + (g.users ? escapeHtml(g.users.username) : "未知") + "</td>" +
+            "<td>" + formatTime(g.created_at) + "</td>" +
+            "<td>" + badge("pending") + "</td>" +
+            '<td class="actions">' +
+            '  <button class="btn btn-success btn-sm" onclick="reviewGoods(\'' + g.id + '\',\'approved\')">批准展示</button>' +
+            '  <button class="btn btn-danger btn-sm" onclick="reviewGoods(\'' + g.id + '\',\'rejected\')">驳回</button>' +
+            "</td>";
+          tb.appendChild(tr);
+        });
+      }
+
+      // 审核商品：批准时数据库触发器会自动生成递增编号（goods_no）
+      window.reviewGoods = async function (id, status) {
+        const ok = confirm(status === "approved" ? "确认批准展示该商品？批准后自动生成编号并上首页。" : "确认驳回该商品？");
+        if (!ok) return;
+        const { error } = await supabase
+          .from("goods")
+          .update({ status: status, reviewed_at: new Date().toISOString() })
+          .eq("id", id);
+        if (error) { showMsg("操作失败：" + error.message, "error"); return; }
+        showMsg(status === "approved" ? "已批准展示，编号已自动生成" : "已驳回该商品", "success");
+        loadPendingGoods();
+        loadApprovedGoods();
+      };
+
+      // ---------- ③ 已展示商品列表（核对编号） ----------
+      async function loadApprovedGoods() {
+        const { data, error } = await supabase
+          .from("goods")
+          .select("goods_no, images, intro, reviewed_at, users(username)")
+          .eq("status", "approved")
+          .order("goods_no", { ascending: true });
+        if (error) { showMsg("加载已展示商品失败：" + error.message, "error"); return; }
+
+        const tb = document.getElementById("approvedGoods");
+        tb.innerHTML = "";
+        document.getElementById("approvedGoodsCount").textContent = data.length;
+        if (!data.length) {
+          tb.innerHTML = '<tr><td colspan="6" class="empty">暂无已展示商品</td></tr>';
+          return;
+        }
+        data.forEach(function (g) {
+          const img = g.images && g.images.length
+            ? '<img class="thumb" src="' + g.images[0] + '" alt="商品图">'
+            : "-";
+          const tr = document.createElement("tr");
+          tr.innerHTML =
+            "<td><b>NO." + g.goods_no + "</b></td>" +
+            "<td>" + img + "</td>" +
+            '<td class="intro-cell">' + escapeHtml(g.intro) + "</td>" +
+            "<td>" + (g.users ? escapeHtml(g.users.username) : "未知") + "</td>" +
+            "<td>" + formatTime(g.reviewed_at) + "</td>" +
+            "<td>" + badge("approved") + "</td>";
+          tb.appendChild(tr);
+        });
+      }
+
+      // 顶部提示条
+      function showMsg(msg, type) {
+        const box = document.getElementById("alert");
+        box.textContent = msg;
+        box.className = "alert " + type;
+        box.style.display = "block";
+        // 3 秒后自动隐藏
+        clearTimeout(showMsg._t);
+        showMsg._t = setTimeout(function () { box.style.display = "none"; }, 3000);
+      }
+    })();
+  </script>
+</body>
+</html>

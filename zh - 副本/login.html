@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>登录 - 账号商品展示站</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <main class="container">
+    <div class="form-card">
+      <h1>登录</h1>
+      <div class="sub">账号经管理员审核通过后方可登录（需求 2）</div>
+
+      <!-- 提示条：显示错误/成功信息 -->
+      <div class="alert" id="alert"></div>
+
+      <form id="loginForm">
+        <div class="form-item">
+          <label>邮箱</label>
+          <input type="email" id="email" required placeholder="you@example.com" autocomplete="username">
+        </div>
+        <div class="form-item">
+          <label>密码</label>
+          <input type="password" id="password" required placeholder="请输入密码" autocomplete="current-password">
+        </div>
+        <button type="submit" class="btn btn-primary" id="submitBtn" style="width:100%">登 录</button>
+      </form>
+
+      <div class="form-tip">还没有账号？<a href="register.html">去注册</a></div>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/common.js"></script>
+  <script>
+    // ============================================================
+    // 登录逻辑：
+    // ① 邮箱+密码校验 ② 审核状态校验（待审核/驳回均不能登录）
+    // ============================================================
+    (async function () {
+      // 如果已经登录（本地有有效会话），直接进首页
+      const s = getSession();
+      if (s && s.id) {
+        const u = await checkSession();
+        if (u) { location.href = "index.html"; return; }
+      }
+
+      document.getElementById("loginForm").addEventListener("submit", async function (e) {
+        e.preventDefault();
+        const email = document.getElementById("email").value.trim().toLowerCase();
+        const password = document.getElementById("password").value;
+        const btn = document.getElementById("submitBtn");
+        const alertBox = document.getElementById("alert");
+        hideAlert(alertBox);
+
+        btn.disabled = true;
+        btn.textContent = "登录中…";
+        try {
+          // 1) 按邮箱查出用户
+          const { data: user, error } = await supabase
+            .from("users")
+            .select("*")
+            .eq("email", email)
+            .maybeSingle();
+          if (error) throw error;
+
+          // 2) 密码比对（前端 SHA-256 与库中哈希对比）
+          const hash = await sha256(password);
+          if (!user || user.password_hash !== hash) {
+            showAlert(alertBox, "邮箱或密码错误", "error");
+            return;
+          }
+
+          // 3) 审核状态校验：待审核 / 已驳回 都不能登录
+          if (user.status === "pending") {
+            showAlert(alertBox, "您的账号正在等待管理员审核，通过后才能登录", "error");
+            return;
+          }
+          if (user.status === "rejected") {
+            showAlert(alertBox, "您的账号申请已被驳回，请联系管理员", "error");
+            return;
+          }
+
+          // 4) 审核通过：写入本地登录态，跳转首页
+          setSession({ id: user.id, email: user.email, username: user.username, role: user.role });
+          location.href = "index.html";
+        } catch (err) {
+          showAlert(alertBox, "登录失败：" + err.message, "error");
+        } finally {
+          btn.disabled = false;
+          btn.textContent = "登 录";
+        }
+      });
+    })();
+
+    // 提示条工具
+    function showAlert(box, msg, type) {
+      box.textContent = msg;
+      box.className = "alert " + type;
+      box.style.display = "block";
+    }
+    function hideAlert(box) {
+      box.style.display = "none";
+    }
+  </script>
+</body>
+</html>

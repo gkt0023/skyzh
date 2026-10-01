@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>注册 - 账号商品展示站</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <main class="container">
+    <div class="form-card">
+      <h1>注册账号</h1>
+      <div class="sub">提交后账号为【待审核】状态，管理员审核通过才能登录（需求 2）</div>
+
+      <div class="alert" id="alert"></div>
+
+      <form id="registerForm">
+        <div class="form-item">
+          <label>邮箱</label>
+          <input type="email" id="email" required placeholder="you@example.com" autocomplete="username">
+        </div>
+        <div class="form-item">
+          <label>昵称</label>
+          <input type="text" id="username" required placeholder="你的昵称" maxlength="20">
+        </div>
+        <div class="form-item">
+          <label>密码</label>
+          <input type="password" id="password" required placeholder="至少 6 位" minlength="6" autocomplete="new-password">
+        </div>
+        <div class="form-item">
+          <label>确认密码</label>
+          <input type="password" id="confirmPassword" required placeholder="再次输入密码" autocomplete="new-password">
+        </div>
+        <button type="submit" class="btn btn-primary" id="submitBtn" style="width:100%">提交注册</button>
+      </form>
+
+      <div class="form-tip">已有账号？<a href="login.html">去登录</a></div>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/common.js"></script>
+  <script>
+    // ============================================================
+    // 注册逻辑：写入 users 表，status 默认 pending（待审核）
+    // ============================================================
+    (async function () {
+      // 已登录用户无需注册，直接回首页
+      const s = getSession();
+      if (s && s.id) {
+        const u = await checkSession();
+        if (u) { location.href = "index.html"; return; }
+      }
+
+      document.getElementById("registerForm").addEventListener("submit", async function (e) {
+        e.preventDefault();
+        const email = document.getElementById("email").value.trim().toLowerCase();
+        const username = document.getElementById("username").value.trim();
+        const password = document.getElementById("password").value;
+        const confirmPassword = document.getElementById("confirmPassword").value;
+        const btn = document.getElementById("submitBtn");
+        const alertBox = document.getElementById("alert");
+        alertBox.style.display = "none";
+
+        // 1) 基础校验
+        if (!username) { showAlert(alertBox, "请填写昵称", "error"); return; }
+        if (password !== confirmPassword) { showAlert(alertBox, "两次输入的密码不一致", "error"); return; }
+        if (password.length < 6) { showAlert(alertBox, "密码至少 6 位", "error"); return; }
+
+        btn.disabled = true;
+        btn.textContent = "提交中…";
+        try {
+          // 2) 查重：邮箱是否已注册
+          const { data: existing, error: qErr } = await supabase
+            .from("users")
+            .select("id")
+            .eq("email", email)
+            .maybeSingle();
+          if (qErr) throw qErr;
+          if (existing) {
+            showAlert(alertBox, "该邮箱已注册，请直接登录", "error");
+            return;
+          }
+
+          // 3) 写入新用户：role=user，status=pending（等待管理员审核）
+          const hash = await sha256(password);
+          const { error } = await supabase
+            .from("users")
+            .insert({
+              email: email,
+              username: username,
+              password_hash: hash,
+              role: "user",
+              status: "pending",
+            });
+          if (error) throw error;
+
+          // 4) 成功提示，引导去登录页等待审核
+          showAlert(alertBox, "注册成功！请等待管理员审核通过后再登录", "success");
+          document.getElementById("registerForm").reset();
+          setTimeout(function () { location.href = "login.html"; }, 1500);
+        } catch (err) {
+          showAlert(alertBox, "注册失败：" + err.message, "error");
+        } finally {
+          btn.disabled = false;
+          btn.textContent = "提交注册";
+        }
+      });
+    })();
+
+    function showAlert(box, msg, type) {
+      box.textContent = msg;
+      box.className = "alert " + type;
+      box.style.display = "block";
+    }
+  </script>
+</body>
+</html>
