@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>首页 - 账号商品展示站</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- 顶栏：站点名 + 用户信息 + 导航 -->
+  <header class="topbar">
+    <div class="inner">
+      <div class="logo">账号商品展示站</div>
+      <div class="nav">
+        <span class="user-info" id="userInfo"></span>
+        <a href="publish.html">发布商品</a>
+        <a href="admin.html" id="adminLink" style="display:none">管理后台</a>
+        <a href="javascript:logout()">退出登录</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <h1 class="page-title">商品列表</h1>
+
+    <!-- 商品卡片容器（JS 动态渲染） -->
+    <div id="goodsList" class="card-grid"></div>
+    <!-- 空状态提示 -->
+    <div id="empty" class="empty" style="display:none">暂无展示商品，管理员审核通过后会显示在这里。</div>
+  </main>
+
+  <!-- Supabase JS SDK（CDN 引入，无需打包） -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- 配置与公共工具（顺序不能乱：config -> common） -->
+  <script src="js/config.js"></script>
+  <script src="js/common.js"></script>
+  <script>
+    // ============================================================
+    // 首页逻辑：① 登录校验（需求 1） ② 拉取审核通过的商品（需求 4/6）
+    // ============================================================
+    (async function () {
+      // 未登录自动跳转登录页；已登录返回当前用户信息
+      const user = await requireLogin("login.html");
+      if (!user) return;
+
+      // 顶栏显示用户名；只有管理员显示"管理后台"入口（需求：区分权限）
+      document.getElementById("userInfo").textContent = "你好，" + user.username;
+      if (user.role === "admin") {
+        document.getElementById("adminLink").style.display = "";
+      }
+
+      // 只拉取审核通过的（approved）商品，按编号升序展示
+      const { data, error } = await supabase
+        .from("goods")
+        .select("id, goods_no, images, intro, created_at, users(username)")
+        .eq("status", "approved")
+        .order("goods_no", { ascending: true });
+
+      if (error) {
+        alert("商品加载失败：" + error.message);
+        return;
+      }
+      renderCards(data || []);
+    })();
+
+    // 渲染卡片列表：编号 + 图片 + 简介（需求 6）
+    function renderCards(list) {
+      const box = document.getElementById("goodsList");
+      const empty = document.getElementById("empty");
+      box.innerHTML = "";
+
+      if (!list.length) {
+        empty.style.display = "block";
+        return;
+      }
+      empty.style.display = "none";
+
+      list.forEach(function (g) {
+        const images = g.images && g.images.length ? g.images : [];
+        // 图片区：单张放大展示，多张用网格
+        let imgsHtml = '<div class="empty" style="padding:20px 0">暂无图片</div>';
+        if (images.length) {
+          const cls = images.length === 1 ? "card-imgs single" : "card-imgs";
+          imgsHtml = '<div class="' + cls + '">' +
+            images.map(function (u) { return '<img src="' + u + '" alt="商品图片" loading="lazy">'; }).join("") +
+            "</div>";
+        }
+
+        const card = document.createElement("div");
+        card.className = "card";
+        card.innerHTML =
+          '<div class="card-head"><span class="no">编号：' + g.goods_no + "</span></div>" +
+          imgsHtml +
+          '<div class="card-intro">' + escapeHtml(g.intro) + "</div>" +
+          '<div class="card-foot">' +
+          "  <span>发布人：" + (g.users ? escapeHtml(g.users.username) : "未知") + "</span>" +
+          "  <span>" + formatTime(g.created_at) + "</span>" +
+          "</div>";
+        box.appendChild(card);
+      });
+    }
+  </script>
+</body>
+</html>
